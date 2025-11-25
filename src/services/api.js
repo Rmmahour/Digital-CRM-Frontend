@@ -108,6 +108,10 @@ export const brandsAPI = {
     const { data } = await api.get("/brands", { params })
     return data
   },
+  reorder: async (items) => {
+    const { data } = await api.put("/brands/reorder", { items })
+    return data
+  },
   getById: async (id) => {
     const { data } = await api.get(`/brands/${id}`)
     return data

@@ -1,6 +1,21 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core"
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  rectSortingStrategy, // <--- NOTE: 'rect' strategy for Grids
+} from "@dnd-kit/sortable"
+import { SortableBrandCard } from "../components/SortableBrandRow" 
 import { Plus, Search, Edit, Trash2 } from "lucide-react"
 import { brandsAPI, calendarsAPI } from "../services/api"
 import { useNavigate } from "react-router-dom"
@@ -20,6 +35,13 @@ export default function BrandsPage() {
     loadBrands()
   }, [])
 
+  // Sensors for drag interaction
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }), // Drag requires 5px movement (prevents accidental clicks)
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  )
+
+
   const loadBrands = async () => {
     try {
       const data = await brandsAPI.getAll()
@@ -28,6 +50,32 @@ export default function BrandsPage() {
       console.error("[v0] Failed to load brands:", error)
     } finally {
       setLoading(false)
+    }
+  }
+
+  // Handle the drop event
+  const handleDragEnd = async (event) => {
+    const { active, over } = event
+
+    if (active.id !== over.id) {
+      setBrands((items) => {
+        const oldIndex = items.findIndex((item) => item.id === active.id)
+        const newIndex = items.findIndex((item) => item.id === over.id)
+        
+        // 1. Reorder locally
+        const newOrder = arrayMove(items, oldIndex, newIndex)
+        
+        // 2. Send to backend
+        const updates = newOrder.map((item, index) => ({
+            id: item.id,
+            order: index
+        }))
+
+        // Fire API request silently
+        brandsAPI.reorder(updates).catch(console.error)
+
+        return newOrder
+      })
     }
   }
 
@@ -89,6 +137,8 @@ export default function BrandsPage() {
 
   const filteredBrands = brands.filter((brand) => brand.name.toLowerCase().includes(searchTerm.toLowerCase()))
 
+  const isDragEnabled = searchTerm === ""
+
   if (loading) {
     return <div className="text-center py-12">Loading brands...</div>
   }
@@ -121,7 +171,33 @@ export default function BrandsPage() {
           />
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {/* DRAG AND DROP CONTEXT */}
+        <DndContext 
+          sensors={sensors} 
+          collisionDetection={closestCenter} 
+          onDragEnd={handleDragEnd}
+        >
+          {/* SORTABLE CONTEXT - Disabled if searching */}
+          <SortableContext 
+            items={filteredBrands.map(b => b.id)} 
+            strategy={rectSortingStrategy}
+            disabled={!isDragEnabled} 
+          >
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {filteredBrands.map((brand) => (
+                <SortableBrandCard 
+                  key={brand.id}
+                  brand={brand}
+                  onClick={handleBrandClick}
+                  onEdit={handleEdit}
+                  onDelete={handleDelete}
+                />
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
+
+        {/* <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredBrands.map((brand) => (
             <div key={brand.id} className="border border-border rounded-lg p-6 hover:shadow-lg transition-shadow">
               <div className="flex items-start justify-between mb-2">
@@ -161,7 +237,7 @@ export default function BrandsPage() {
               </div>
             </div>
           ))}
-        </div>
+        </div> */}
       </div>
 
       <CreateBrandModal isOpen={showCreateModal} onClose={() => setShowCreateModal(false)} onSuccess={loadBrands} />

@@ -8,6 +8,7 @@ const contentTypes = [
   { value: "STATIC", label: "Static Post" },
   { value: "VIDEO", label: "Video" },
   { value: "STORY", label: "Story" },
+  { value: "POLL", label: "Poll" },
   { value: "REEL", label: "Reel" },
   { value: "CAROUSEL", label: "Carousel" },
   { value: "BLOG_POST", label: "Blog Post" },

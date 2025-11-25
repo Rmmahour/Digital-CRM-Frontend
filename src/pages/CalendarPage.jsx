@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { useParams, useNavigate } from "react-router-dom"
-import { ArrowLeft, Plus, CalendarIcon, Eye, Trash2 } from "lucide-react"
+import { ArrowLeft, Plus, CalendarIcon, Eye, Trash2, Pencil, Check, X } from "lucide-react"
 import { calendarsAPI, tasksAPI, usersAPI } from "../services/api"
 import { useAuth } from "../contexts/AuthContext"
 import { format } from "date-fns"
@@ -22,6 +22,7 @@ const contentTypeLabels = {
   VIDEO: "Video",
   STORY: "Story",
   REEL: "Reel",
+  POLL: "Poll",
   CAROUSEL: "Carousel",
   BLOG_POST: "Blog Post",
 }
@@ -37,6 +38,9 @@ export default function CalendarPage() {
   const [editingTaskId, setEditingTaskId] = useState(null)
   const [assigningTo, setAssigningTo] = useState("")
   const [selectedMonth, setSelectedMonth] = useState(null)
+  const [editingScopeId, setEditingScopeId] = useState(null)
+  const [editQuantity, setEditQuantity] = useState(0)
+  const [editType, setEditType] = useState("")
 
   useEffect(() => {
     loadCalendar()
@@ -99,6 +103,32 @@ export default function CalendarPage() {
     } catch (error) {
       console.error("[v0] Failed to generate tasks:", error)
       alert("Failed to generate tasks: " + (error.response?.data?.message || error.message))
+    }
+  }
+
+  const startEditingScope = (scope) => {
+    setEditingScopeId(scope.id)
+    setEditQuantity(scope.quantity)
+    setEditType(scope.contentType)
+  }
+
+  const cancelEditingScope = () => {
+    setEditingScopeId(null)
+    setEditQuantity(0)
+    setEditType("")
+  }
+
+  const handleUpdateScope = async (scopeId) => {
+    try {
+      await calendarsAPI.updateScope(scopeId, {
+        quantity: parseInt(editQuantity),
+        contentType: editType
+      })
+      setEditingScopeId(null)
+      loadCalendar()
+    } catch (error) {
+      console.error("Failed to update scope:", error)
+      alert("Failed to update scope")
     }
   }
 
@@ -215,9 +245,14 @@ export default function CalendarPage() {
       <div className="bg-white rounded-lg border border-gray-200 p-6">
         <div className="flex items-start justify-between mb-6">
           <div>
-            <h1 className="text-3xl font-bold mb-2 dark:text-black">
-              {calendar.brand.name} - {format(new Date(calendar.year, calendar.month - 1), "MMMM yyyy")}
-            </h1>
+            <div className="flex gap-3 items-center">
+              {calendar.brand.logo && (
+                <img src={calendar.brand.logo} alt={calendar.brand.name} width={60} height={20} className="mb-2"/>
+              )}
+              <h1 className="text-3xl font-bold mb-2 dark:text-black">
+                {calendar.brand.name} - {format(new Date(calendar.year, calendar.month - 1), "MMMM yyyy")}
+              </h1>
+            </div>
             <p className="text-gray-600">Social Media Calendar & Content Planning</p>
           </div>
           {canManage && (
@@ -242,7 +277,115 @@ export default function CalendarPage() {
 
         {calendar.scopes && calendar.scopes.length > 0 && (
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
+
             {calendar.scopes.map((scope) => {
+              const prog = progress[scope.contentType] || { completed: 0, total: scope.quantity, percentage: 0 }
+              const isEditing = editingScopeId === scope.id;
+
+              return (
+                <div key={scope.id} className="relative group bg-gray-50 rounded-lg p-4 border border-transparent hover:border-gray-200 transition-all">
+
+                  {/* Action Buttons */}
+                  {canManage && (
+                    <div className={`absolute top-2 right-2 flex gap-1 ${isEditing ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} transition-opacity z-10`}>
+                      {isEditing ? (
+                        <>
+                          <button
+                            onClick={() => handleUpdateScope(scope.id)}
+                            className="p-1 bg-green-100 text-green-700 rounded hover:bg-green-200"
+                            title="Save Changes"
+                          >
+                            <Check className="w-3 h-3" />
+                          </button>
+                          <button
+                            onClick={cancelEditingScope}
+                            className="p-1 bg-red-100 text-red-700 rounded hover:bg-red-200"
+                            title="Cancel"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            onClick={() => startEditingScope(scope)}
+                            className="p-1 bg-white text-blue-600 rounded shadow-sm hover:bg-blue-50"
+                            title="Edit Type & Quantity"
+                          >
+                            <Pencil className="w-3 h-3" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteScope(scope.id)}
+                            className="p-1 bg-white text-red-600 rounded shadow-sm hover:bg-red-50"
+                            title="Delete Scope"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Header: Title or Dropdown */}
+                  <div className="flex items-center justify-between mb-2">
+                    {isEditing ? (
+                      // EDIT MODE: Dropdown for Content Type
+                      <select
+                        className="w-full text-sm font-semibold border border-blue-400 rounded px-1 py-1 mr-6 focus:outline-none"
+                        value={editType}
+                        onChange={(e) => setEditType(e.target.value)}
+                      >
+                        {Object.keys(contentTypeLabels).map((key) => (
+                          <option key={key} value={key}>
+                            {contentTypeLabels[key]}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      // VIEW MODE: Label
+                      <h3 className="font-semibold text-sm dark:text-black">
+                        {contentTypeLabels[scope.contentType] || scope.contentType}
+                      </h3>
+                    )}
+
+                    {!isEditing && (
+                      <span className="text-xs text-gray-600 dark:text-black">{prog.percentage}%</span>
+                    )}
+                  </div>
+
+                  {/* Quantity: Display or Input */}
+                  <div className="mb-2 dark:text-black">
+                    {isEditing ? (
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min="1"
+                          className="w-16 px-2 py-1 text-sm border border-blue-400 rounded focus:outline-none"
+                          value={editQuantity}
+                          onChange={(e) => setEditQuantity(e.target.value)}
+                        />
+                        <span className="text-xs text-gray-500">Tasks</span>
+                      </div>
+                    ) : (
+                      <div className="text-2xl font-bold">
+                        {prog.completed}/{prog.total}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Progress Bar (Hide in edit mode to reduce clutter, or keep it) */}
+                  <div className="w-full bg-gray-200 rounded-full h-2">
+                    <div
+                      className="bg-blue-600 h-2 rounded-full transition-all"
+                      style={{ width: `${prog.percentage}%` }}
+                    />
+                  </div>
+                </div>
+              )
+            })}
+
+
+            {/* {calendar.scopes.map((scope) => {
               const prog = progress[scope.contentType] || { completed: 0, total: scope.quantity, percentage: 0 }
               return (
                 <div key={scope.id} className="bg-gray-50 rounded-lg p-4">
@@ -261,7 +404,7 @@ export default function CalendarPage() {
                   </div>
                 </div>
               )
-            })}
+            })} */}
           </div>
         )}
       </div>
@@ -383,19 +526,19 @@ export default function CalendarPage() {
                     <td className="px-4 py-3 text-sm max-w-xs dark:text-black">
                       <div className="truncate text-gray-400 whitespace-pre-wrap">
                         {task.copyIdea ? (
-                        <p className="text-gray-700 whitespace-pre-wrap">{task.copyIdea}</p>
-                      ) : (
-                        <p className="text-gray-400 italic">No copy idea added yet</p>
-                      )}
+                          <p className="text-gray-700 whitespace-pre-wrap">{task.copyIdea}</p>
+                        ) : (
+                          <p className="text-gray-400 italic">No copy idea added yet</p>
+                        )}
                       </div>
                     </td>
                     <td className="px-4 py-3 text-sm max-w-xs dark:text-black">
                       <div className="truncate text-gray-400 whitespace-pre-wrap">
                         {task.caption ? (
-                        <p className="text-gray-700 whitespace-pre-wrap">{task.caption}</p>
-                      ) : (
-                        <p className="text-gray-400 italic">No Caption yet</p>
-                      )}
+                          <p className="text-gray-700 whitespace-pre-wrap">{task.caption}</p>
+                        ) : (
+                          <p className="text-gray-400 italic">No Caption yet</p>
+                        )}
                       </div>
                     </td>
                     <td className="px-4 py-3 text-sm dark:text-black">
