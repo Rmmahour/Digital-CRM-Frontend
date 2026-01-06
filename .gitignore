@@ -6,8 +6,8 @@ dist/
 build/
 
 # Environment variables
-.env
-.env.local
+# .env
+# .env.local
 
 # Logs
 logs
