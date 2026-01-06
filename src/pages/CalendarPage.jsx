@@ -8,6 +8,9 @@ import { useAuth } from "../contexts/AuthContext"
 import { format } from "date-fns"
 import AddScopeModal from "../components/AddScopeModal"
 
+
+const API_BASE_URL = 'https://digitalcrm.abacusdesk.com'
+
 const statusColors = {
   TODO: "bg-gray-100 text-gray-800 border-gray-300",
   IN_PROGRESS: "bg-blue-100 text-blue-800 border-blue-300",
@@ -37,10 +40,18 @@ export default function CalendarPage() {
   const [users, setUsers] = useState([])
   const [editingTaskId, setEditingTaskId] = useState(null)
   const [assigningTo, setAssigningTo] = useState("")
-  const [selectedMonth, setSelectedMonth] = useState(null)
+  const [selectedMonth, setSelectedMonth] = useState(() => {
+    // Default: Current month
+    return format(new Date(), "MMMM yyyy")
+  })
   const [editingScopeId, setEditingScopeId] = useState(null)
   const [editQuantity, setEditQuantity] = useState(0)
   const [editType, setEditType] = useState("")
+
+  // ✅ NEW: Inline editing states for tasks
+  const [editingCell, setEditingCell] = useState({ taskId: null, field: null })
+  const [editValue, setEditValue] = useState("")
+  const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     loadCalendar()
@@ -49,16 +60,59 @@ export default function CalendarPage() {
 
   const loadCalendar = async () => {
     try {
-      console.log("[v0] Loading calendar...")
+      console.log("[DEBUG] Loading calendar...")
       const data = await calendarsAPI.getById(id)
-      setCalendar(data)
-      console.log("[v0] Calendar loaded with", data.tasks?.length, "tasks")
+
+      // Get ALL calendars for this brand
+      const allBrandCalendars = await calendarsAPI.getByBrand(data.brand.id)
+
+      console.log("[DEBUG] Total calendars for brand:", allBrandCalendars.length)
+
+      // Merge ALL tasks from ALL calendars of this brand
+      const allBrandTasks = allBrandCalendars.flatMap(cal => cal.tasks || [])
+
+      // Remove duplicates (if any) by task id
+      const uniqueTasks = allBrandTasks.filter((task, index, self) =>
+        index === self.findIndex(t => t.id === task.id)
+      )
+
+      console.log("[DEBUG] Current calendar tasks:", data.tasks?.length)
+      console.log("[DEBUG] ALL brand tasks:", uniqueTasks.length)
+
+      // Check unique months by PUBLISH DATE
+      const uniqueMonths = [...new Set(uniqueTasks.map(t => {
+        if (t.publishDate) {
+          const d = new Date(t.publishDate)
+          return `${d.getFullYear()}-${d.getMonth() + 1}`
+        }
+        return "Unscheduled"
+      }))]
+      console.log("[DEBUG] Unique months (by publishDate):", uniqueMonths)
+
+      // Set calendar with ALL brand tasks
+      setCalendar({
+        ...data,
+        tasks: uniqueTasks
+      })
     } catch (error) {
-      console.error("[v0] Failed to load calendar:", error)
+      console.error("[DEBUG] Failed to load calendar:", error)
     } finally {
       setLoading(false)
     }
   }
+
+  // const loadCalendar = async () => {
+  //   try {
+  //     console.log("[v0] Loading calendar...")
+  //     const data = await calendarsAPI.getById(id)
+  //     setCalendar(data)
+  //     console.log("[v0] Calendar loaded with", data.tasks?.length, "tasks")
+  //   } catch (error) {
+  //     console.error("[v0] Failed to load calendar:", error)
+  //   } finally {
+  //     setLoading(false)
+  //   }
+  // }
 
   const loadUsers = async () => {
     try {
@@ -67,6 +121,208 @@ export default function CalendarPage() {
     } catch (error) {
       console.error("[v0] Failed to load users:", error)
     }
+  }
+
+  // ✅ NEW: Start editing a cell
+  const startEditing = (taskId, field, currentValue) => {
+    setEditingCell({ taskId, field })
+    setEditValue(currentValue || "")
+  }
+
+  // ✅ NEW: Cancel editing
+  const cancelEditing = () => {
+    setEditingCell({ taskId: null, field: null })
+    setEditValue("")
+  }
+
+  // ✅ NEW: Save edited value
+  const saveEdit = async (taskId, field) => {
+    setSaving(true)
+    try {
+      let updateData = {}
+      
+      switch (field) {
+        case 'title':
+          updateData = { title: editValue }
+          break
+        case 'description':
+          updateData = { description: editValue }
+          break
+        case 'assignedTo':
+          updateData = { assignedToId: editValue || null }
+          break
+        case 'copyIdea':
+          await tasksAPI.updateCopyIdea(taskId, editValue)
+          cancelEditing()
+          loadCalendar()
+          return
+        case 'caption':
+          await tasksAPI.updateCaption(taskId, editValue)
+          cancelEditing()
+          loadCalendar()
+          return
+        case 'creativeRef':
+          await tasksAPI.updateCreativeRef(taskId, editValue)
+          cancelEditing()
+          loadCalendar()
+          return
+        case 'status':
+          await tasksAPI.updateStatus(taskId, editValue)
+          cancelEditing()
+          loadCalendar()
+          return
+        case 'contentType':
+          updateData = { contentType: editValue }
+          break
+        case 'dueDate':
+          updateData = { dueDate: editValue ? new Date(editValue).toISOString() : null }
+          break
+        case 'publishDate':
+          await tasksAPI.updatePublishDate(taskId, editValue ? new Date(editValue).toISOString() : null)
+          cancelEditing()
+          loadCalendar()
+          return
+        default:
+          updateData = { [field]: editValue }
+      }
+
+      await tasksAPI.update(taskId, updateData)
+      cancelEditing()
+      loadCalendar()
+    } catch (error) {
+      console.error("Failed to save:", error)
+      alert("Failed to save changes")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // ✅ NEW: Render editable cell
+  const renderEditableCell = (task, field, displayValue, inputType = "text") => {
+    const isEditing = editingCell.taskId === task.id && editingCell.field === field
+    const canEdit = ["SUPER_ADMIN", "ADMIN", "ACCOUNT_MANAGER"].includes(user.role)
+
+    if (isEditing) {
+      return (
+        <div className="flex items-center gap-1">
+          {inputType === "textarea" ? (
+            <textarea
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              className="w-full text-sm border border-blue-400 rounded px-2 py-1 min-h-[60px]"
+              autoFocus
+            />
+          ) : inputType === "date" ? (
+            <input
+              type="date"
+              value={editValue ? format(new Date(editValue), "yyyy-MM-dd") : ""}
+              onChange={(e) => setEditValue(e.target.value)}
+              className="text-sm border border-blue-400 rounded px-2 py-1"
+              autoFocus
+            />
+          ) : inputType === "select-user" ? (
+            <select
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              className="text-sm border border-blue-400 rounded px-2 py-1"
+              autoFocus
+            >
+              <option value="">Unassigned</option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.firstName} {u.lastName}
+                </option>
+              ))}
+            </select>
+          ) : inputType === "select-status" ? (
+            <select
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              className="text-sm border border-blue-400 rounded px-2 py-1"
+              autoFocus
+            >
+              <option value="TODO">TODO</option>
+              <option value="IN_PROGRESS">IN PROGRESS</option>
+              <option value="IN_REVIEW">IN REVIEW</option>
+              <option value="APPROVED">APPROVED</option>
+              <option value="REJECTED">REJECTED</option>
+              <option value="COMPLETED">COMPLETED</option>
+            </select>
+          ) : inputType === "select-type" ? (
+            <select
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              className="text-sm border border-blue-400 rounded px-2 py-1"
+              autoFocus
+            >
+              {Object.keys(contentTypeLabels).map((key) => (
+                <option key={key} value={key}>{contentTypeLabels[key]}</option>
+              ))}
+            </select>
+          ) : (
+            <input
+              type="text"
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              className="w-full text-sm border border-blue-400 rounded px-2 py-1"
+              autoFocus
+            />
+          )}
+          <button
+            onClick={() => saveEdit(task.id, field)}
+            disabled={saving}
+            className="p-1 bg-green-100 text-green-700 rounded hover:bg-green-200"
+          >
+            <Check className="w-3 h-3" />
+          </button>
+          <button
+            onClick={cancelEditing}
+            className="p-1 bg-red-100 text-red-700 rounded hover:bg-red-200"
+          >
+            <X className="w-3 h-3" />
+          </button>
+        </div>
+      )
+    }
+
+    // Non-editing view
+    const getValue = () => {
+      if (field === "assignedTo") {
+        return task.assignedTo 
+          ? `${task.assignedTo.firstName} ${task.assignedTo.lastName}`
+          : <span className="text-gray-400">Unassigned</span>
+      }
+      if (field === "status") {
+        return (
+          <span className={`inline-flex px-2 py-1 text-xs rounded-full border ${statusColors[task.status]}`}>
+            {task.status.replace("_", " ")}
+          </span>
+        )
+      }
+      if (field === "contentType") {
+        return (
+          <span className="inline-flex px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-800">
+            {contentTypeLabels[task.contentType] || "N/A"}
+          </span>
+        )
+      }
+      return displayValue || <span className="text-gray-400 italic">-</span>
+    }
+
+    return (
+      <div 
+        onClick={() => canEdit && startEditing(task.id, field, 
+          field === "assignedTo" ? task.assignedToId : 
+          field === "status" ? task.status :
+          field === "contentType" ? task.contentType :
+          displayValue
+        )}
+        className={canEdit ? "cursor-pointer hover:bg-blue-50 rounded px-1 py-0.5 -mx-1" : ""}
+        title={canEdit ? "Click to edit" : ""}
+      >
+        {getValue()}
+      </div>
+    )
   }
 
   const handleGenerateTasks = async () => {
@@ -176,20 +432,69 @@ export default function CalendarPage() {
     return progress
   }
 
+  // const getTasksByMonth = () => {
+  //   if (!calendar?.tasks) return {}
+
+  //   const grouped = {}
+  //   calendar.tasks.forEach((task) => {
+  //     const date = new Date(task.createdAt)
+  //     const monthKey = format(date, "MMMM yyyy")
+
+  //     if (!grouped[monthKey]) {
+  //       grouped[monthKey] = []
+  //     }
+  //     grouped[monthKey].push(task)
+  //   })
+
+
+  //   calendar.tasks.forEach((task) => {
+  //     if (task.postingDate) {
+  //       const date = new Date(task.postingDate)
+  //       const monthKey = format(date, "MMMM yyyy")
+  //       if (!grouped[monthKey]) {
+  //         grouped[monthKey] = []
+  //       }
+  //       grouped[monthKey].push(task)
+  //     } else {
+  //       if (!grouped["Unscheduled"]) {
+  //         grouped["Unscheduled"] = []
+  //       }
+  //       grouped["Unscheduled"].push(task)
+  //     }
+  //   })
+
+  //   return grouped
+  // }
+
+
+
+
+
+  // const getMonths = () => {
+  //   const tasksByMonth = getTasksByMonth()
+  //   return Object.keys(tasksByMonth).sort((a, b) => {
+  //     if (a === "Unscheduled") return 1
+  //     if (b === "Unscheduled") return -1
+  //     return new Date(a) - new Date(b)
+  //   })
+  // }
+
+  // UPDATED: Get sorted months
+
   const getTasksByMonth = () => {
     if (!calendar?.tasks) return {}
 
     const grouped = {}
     calendar.tasks.forEach((task) => {
-      if (task.postingDate) {
-        const date = new Date(task.postingDate)
+      if (task.publishDate) {
+        const date = new Date(task.publishDate)
         const monthKey = format(date, "MMMM yyyy")
+
         if (!grouped[monthKey]) {
           grouped[monthKey] = []
         }
         grouped[monthKey].push(task)
       } else {
-        // Tasks without posting date go to "Unscheduled"
         if (!grouped["Unscheduled"]) {
           grouped["Unscheduled"] = []
         }
@@ -199,7 +504,6 @@ export default function CalendarPage() {
 
     return grouped
   }
-
   const getMonths = () => {
     const tasksByMonth = getTasksByMonth()
     return Object.keys(tasksByMonth).sort((a, b) => {
@@ -208,14 +512,65 @@ export default function CalendarPage() {
       return new Date(a) - new Date(b)
     })
   }
+  // const getMonths = () => {
+  //   const tasksByMonth = getTasksByMonth()
+  //   return Object.keys(tasksByMonth).sort((a, b) => {
+  //     return new Date(a) - new Date(b)
+  //   })
+  // }
 
+  // UPDATED: Get filtered tasks based on selected month
   const getFilteredTasks = () => {
-    if (!selectedMonth) {
+    const tasksByMonth = getTasksByMonth()
+
+    if (selectedMonth === "ALL") {
       return calendar?.tasks || []
     }
-    const tasksByMonth = getTasksByMonth()
-    return tasksByMonth[selectedMonth] || []
+
+    if (selectedMonth && tasksByMonth[selectedMonth]) {
+      return tasksByMonth[selectedMonth]
+    }
+
+    return []
   }
+
+  const handleDeleteAttachment = async (attachmentId) => {
+  if (!confirm("Are you sure you want to delete this attachment?")) return
+  
+  try {
+    await tasksAPI.deleteAttachment(attachmentId)
+    loadCalendar()
+  } catch (error) {
+    console.error("Failed to delete attachment:", error)
+    alert("Failed to delete attachment")
+  }
+}
+
+
+  // const getFilteredTasks = () => {
+  //   if (!selectedMonth) {
+  //     return calendar?.tasks || []
+  //   }
+  //   const tasksByMonth = getTasksByMonth()
+  //   return tasksByMonth[selectedMonth] || []
+  // }
+
+  // Set current month as default when calendar loads
+  useEffect(() => {
+    if (calendar?.tasks && calendar.tasks.length > 0) {
+      const currentMonth = format(new Date(), "MMMM yyyy")
+      const tasksByMonth = getTasksByMonth()
+
+      if (tasksByMonth[currentMonth]) {
+        setSelectedMonth(currentMonth)
+      } else {
+        const months = Object.keys(tasksByMonth)
+        if (months.length > 0) {
+          setSelectedMonth(currentMonth)
+        }
+      }
+    }
+  }, [calendar])
 
   if (loading) {
     return <div className="text-center py-12">Loading calendar...</div>
@@ -227,7 +582,9 @@ export default function CalendarPage() {
 
   const progress = calculateProgress()
   const canManage = ["SUPER_ADMIN", "ADMIN", "ACCOUNT_MANAGER"].includes(user.role)
+  const tasksByMonth = getTasksByMonth()
   const months = getMonths()
+  const currentMonthKey = format(new Date(), "MMMM yyyy")
   const filteredTasks = getFilteredTasks()
 
   return (
@@ -235,7 +592,7 @@ export default function CalendarPage() {
       <div className="flex items-center justify-between">
         <button
           onClick={() => navigate("/dashboard/brands")}
-          className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
+          className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors dark:hover:text-gray-100 dark:text-gray-400"
         >
           <ArrowLeft className="w-5 h-5" />
           Back to Brands
@@ -247,7 +604,7 @@ export default function CalendarPage() {
           <div>
             <div className="flex gap-3 items-center">
               {calendar.brand.logo && (
-                <img src={calendar.brand.logo} alt={calendar.brand.name} width={60} height={20} className="mb-2"/>
+                <img src={calendar.brand.logo} alt={calendar.brand.name} width={60} height={20} className="mb-2" />
               )}
               <h1 className="text-3xl font-bold mb-2 dark:text-black">
                 {calendar.brand.name} - {format(new Date(calendar.year, calendar.month - 1), "MMMM yyyy")}
@@ -409,7 +766,7 @@ export default function CalendarPage() {
         )}
       </div>
 
-      {months.length > 0 && (
+      {/* {months.length > 0 && (
         <div className="bg-white rounded-lg border border-gray-200 p-4">
           <div className="flex items-center gap-2 overflow-x-auto">
             <button
@@ -435,7 +792,60 @@ export default function CalendarPage() {
             })}
           </div>
         </div>
-      )}
+      )} */}
+      {/* UPDATED: Month Tabs */}
+      <div className="bg-white rounded-lg border border-gray-200 p-4">
+        <div className="flex items-center gap-2 overflow-x-auto">
+          {/* All Tasks Button */}
+          <button
+            onClick={() => setSelectedMonth("ALL")}
+            className={`px-4 py-2 rounded-lg font-medium transition-colors whitespace-nowrap ${selectedMonth === "ALL"
+              ? "bg-blue-600 text-white"
+              : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+              }`}
+          >
+            All Tasks ({calendar.tasks?.length || 0})
+          </button>
+
+          {/* Month Tabs - sorted chronologically */}
+          {months.map((month) => {
+            const count = tasksByMonth[month]?.length || 0
+            const isCurrentMonth = month === currentMonthKey
+
+            return (
+              <button
+                key={month}
+                onClick={() => setSelectedMonth(month)}
+                className={`px-4 py-2 rounded-lg font-medium transition-colors whitespace-nowrap ${selectedMonth === month
+                  ? "bg-blue-600 text-white"
+                  : isCurrentMonth
+                    ? "bg-blue-100 text-blue-700 hover:bg-blue-200 ring-2 ring-blue-300"
+                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  }`}
+              >
+                {month} ({count})
+                {isCurrentMonth && selectedMonth !== month && (
+                  <span className="ml-1 text-xs">(Current)</span>
+                )}
+              </button>
+            )
+          })}
+
+          {/* Show current month tab even if no tasks */}
+          {!tasksByMonth[currentMonthKey] && (
+            <button
+              onClick={() => setSelectedMonth(currentMonthKey)}
+              className={`px-4 py-2 rounded-lg font-medium transition-colors whitespace-nowrap ${selectedMonth === currentMonthKey
+                ? "bg-blue-600 text-white"
+                : "bg-blue-100 text-blue-700 hover:bg-blue-200 ring-2 ring-blue-300"
+                }`}
+            >
+              {currentMonthKey} (0)
+              <span className="ml-1 text-xs">(Current)</span>
+            </button>
+          )}
+        </div>
+      </div>
 
       <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
         <div className="overflow-x-auto">
@@ -463,13 +873,13 @@ export default function CalendarPage() {
                 filteredTasks.map((task, index) => (
                   <tr key={task.id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-4 py-3 text-sm dark:text-black">{index + 1}</td>
-                    <td className="px-4 py-3 text-sm font-medium dark:text-black">{task.title}</td>
+                    <td className="px-4 py-3 text-sm font-medium dark:text-black">{renderEditableCell(task, "title", task.title)}</td>
                     <td className="px-4 py-3 text-sm dark:text-black">
                       {task.createdAt ? format(new Date(task.createdAt), "MM/dd/yyyy") : "-"}
                     </td>
                     <td className="px-4 py-3">
                       <span className="inline-flex px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-800">
-                        {task.contentType ? contentTypeLabels[task.contentType] : "N/A"}
+                          {renderEditableCell(task, "contentType", task.contentType, "select-type")}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-sm dark:text-black">
@@ -521,23 +931,23 @@ export default function CalendarPage() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-sm max-w-xs dark:text-black">
-                      <div className="truncate">{task.description || "-"}</div>
+                      <div className="truncate">{renderEditableCell(task, "description", task.description, "textarea")}</div>
                     </td>
                     <td className="px-4 py-3 text-sm max-w-xs dark:text-black">
                       <div className="truncate text-gray-400 whitespace-pre-wrap">
                         {task.copyIdea ? (
-                          <p className="text-gray-700 whitespace-pre-wrap">{task.copyIdea}</p>
+                          <p className="text-gray-700 whitespace-pre-wrap">{renderEditableCell(task, "copyIdea", task.copyIdea, "textarea")}</p>
                         ) : (
-                          <p className="text-gray-400 italic">No copy idea added yet</p>
+                          <p className="text-gray-400 italic">{renderEditableCell(task, "copyIdea", task.copyIdea, "textarea")}</p>
                         )}
                       </div>
                     </td>
                     <td className="px-4 py-3 text-sm max-w-xs dark:text-black">
                       <div className="truncate text-gray-400 whitespace-pre-wrap">
                         {task.caption ? (
-                          <p className="text-gray-700 whitespace-pre-wrap">{task.caption}</p>
+                          <p className="text-gray-700 whitespace-pre-wrap">{renderEditableCell(task, "caption", task.caption, "textarea")}</p>
                         ) : (
-                          <p className="text-gray-400 italic">No Caption yet</p>
+                          <p className="text-gray-400 italic">{renderEditableCell(task, "caption", task.caption, "textarea")}</p>
                         )}
                       </div>
                     </td>
@@ -547,27 +957,28 @@ export default function CalendarPage() {
                           <div className="space-y-2">
                             {task.creativeRef.split('\n').map((link, index) => (
                               link.trim() && (
-                                <a
-                                  key={index}
+                                <p key={index}>
+                                  {/* <a
                                   href={link.trim()}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="block text-blue-600 hover:underline"
-                                >
-                                  {link.trim()}
-                                </a>
+                                  className="block text-blue-600 hover:underline w-max"
+                                > */}
+                                  {renderEditableCell(task, "creativeRef", task.creativeRef, "textarea")}
+                                {/* </a> */}
+                                </p>
                               )
                             ))}
                           </div>
                         ) : (
-                          <p className="text-gray-400 italic">No creative added yet</p>
+                          <p className="text-gray-400 italic">{renderEditableCell(task, "creativeRef", task.creativeRef, "textarea")}</p>
                         )}
                       </div>
                     </td>
                     <td className="px-4 py-3 text-sm dark:text-black">
                       {task.attachments && task.attachments.length > 0 ? (
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          {task.attachments.map((attachment) => (
+                          {/* {task.attachments.map((attachment) => (
                             <div
                               key={attachment.id}
                               className="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50"
@@ -582,7 +993,7 @@ export default function CalendarPage() {
                               </div>
                               <div className="flex items-center gap-2">
                                 <a
-                                  href={`http://localhost:5000${attachment.fileUrl}`}
+                                  href={`${API_BASE_URL}${attachment.fileUrl}`}
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
@@ -599,7 +1010,7 @@ export default function CalendarPage() {
                                 )}
                               </div>
                             </div>
-                          ))}
+                          ))} */}
                         </div>
                       ) : (
                         <p className="text-gray-500 text-center py-8">No reference yet</p>
@@ -613,9 +1024,9 @@ export default function CalendarPage() {
                     </td>
                     <td className="px-4 py-3">
                       <span
-                        className={`inline-flex px-2 py-1 text-xs rounded-full border ${statusColors[task.status]}`}
+                        className={`inline-flex text-xs rounded-full ${statusColors[task.status]}`}
                       >
-                        {task.status.replace("_", " ")}
+                        {renderEditableCell(task, "status", task.status, "select-status")}
                       </span>
                     </td>
                     <td className="px-4 py-3">
@@ -642,12 +1053,19 @@ export default function CalendarPage() {
                 ))
               ) : (
                 <tr>
-                  <td colSpan="9" className="px-4 py-8 text-center text-gray-500">
-                    {selectedMonth
-                      ? `No tasks for ${selectedMonth}`
-                      : "No tasks yet. Click 'Generate Tasks' to create tasks based on scope."}
+                  <td colSpan="14" className="px-4 py-8 text-center text-gray-500">
+                    {selectedMonth === "ALL"
+                      ? "No tasks yet. Click 'Generate Tasks' to create tasks based on scope."
+                      : `No tasks created in ${selectedMonth}`}
                   </td>
                 </tr>
+                // <tr>
+                //   <td colSpan="9" className="px-4 py-8 text-center text-gray-500">
+                //     {selectedMonth
+                //       ? `No tasks for ${selectedMonth}`
+                //       : "No tasks yet. Click 'Generate Tasks' to create tasks based on scope."}
+                //   </td>
+                // </tr>
               )}
             </tbody>
           </table>

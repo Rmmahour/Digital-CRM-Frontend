@@ -1,10 +1,12 @@
 import axios from "axios"
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api"
+// const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api"
+const API_URL = '/api'
 import { formatTime, getDefaultTimeEstimate } from "../utils/timeEstimates"
 
 const api = axios.create({
-  baseURL: API_URL,
+  baseURL: '/api',
+  withCredentials: true,
   headers: {
     "Content-Type": "application/json",
   },
@@ -304,6 +306,10 @@ export const calendarsAPI = {
   },
   getById: async (id) => {
     const { data } = await api.get(`/calendars/${id}`)
+    return data
+  },
+  getByBrand: async (brandId) => {
+    const { data } = await api.get(`/calendars/brand/${brandId}`)
     return data
   },
   create: async (calendarData) => {

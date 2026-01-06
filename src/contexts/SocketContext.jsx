@@ -21,7 +21,10 @@ export const SocketProvider = ({ children }) => {
       return
     }
 
-    const newSocket = io(import.meta.env.VITE_API_URL?.replace("/api", "") || "http://localhost:5000", {
+    // const newSocket = io(import.meta.env.VITE_API_URL?.replace("/api", "") || "http://localhost:5000", {
+    const newSocket = io('', {
+      withCredentials: true,
+  transports: ['websocket', 'polling'],
       auth: {
         token: localStorage.getItem("token"),
       },

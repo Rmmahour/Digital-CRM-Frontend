@@ -30,6 +30,8 @@ import EditTaskModal from "../components/EditTaskModal"
 import MentionInput from "../components/MentionInput"
 import { getDefaultTimeEstimate, formatTime, parseTimeToHours } from "../utils/timeEstimates"
 
+const API_BASE_URL = 'https://digitalcrm.abacusdesk.com'
+
 const statusColors = {
   TODO: "bg-gray-100 text-gray-800",
   IN_PROGRESS: "bg-blue-100 text-blue-800",
@@ -414,11 +416,23 @@ export default function TaskDetailPage() {
   }
 
   // Helper function to format date for input[type="date"]
+// const formatDateForInput = (date) => {
+//   if (!date) return ''
+//   const d = new Date(date)
+//   return d.toISOString().split('T')[0]
+// }
 const formatDateForInput = (date) => {
   if (!date) return ''
+
   const d = new Date(date)
-  return d.toISOString().split('T')[0]
+  const year = d.getFullYear()
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+
+  return `${year}-${month}-${day}`
 }
+
+
 
   const handleUpdateSocialStatus = async (newSocialStatus) => {
     try {
@@ -500,7 +514,7 @@ const formatDateForInput = (date) => {
 
   const canManage = ["SUPER_ADMIN", "ADMIN", "ACCOUNT_MANAGER"].includes(user.role)
 
-  const canEditContent = ["SUPER_ADMIN", "ADMIN", "ACCOUNT_MANAGER", "WRITER"].includes(user.role)
+  const canEditContent = ["SUPER_ADMIN", "ADMIN", "ACCOUNT_MANAGER", "WRITER","DESIGNER"].includes(user.role)
 
   const isAssignedDesigner = task.assignedToId === user.id && user.role === "DESIGNER"
 
@@ -954,9 +968,9 @@ const formatDateForInput = (date) => {
           ) : (
             <div>
               {task.copyIdea ? (
-                <p className="text-gray-700 whitespace-pre-wrap">{task.copyIdea}</p>
+                <p className="text-gray-700 whitespace-pre-wrap dark:text-white">{task.copyIdea}</p>
               ) : (
-                <p className="text-gray-400 italic">No copy idea added yet</p>
+                <p className="text-gray-400 italic dark:text-white">No copy idea added yet</p>
               )}
             </div>
           )}
@@ -1011,9 +1025,9 @@ const formatDateForInput = (date) => {
           ) : (
             <div>
               {task.caption ? (
-                <p className="text-gray-700 whitespace-pre-wrap">{task.caption}</p>
+                <p className="text-gray-700 whitespace-pre-wrap dark:text-white">{task.caption}</p>
               ) : (
-                <p className="text-gray-400 italic">No caption added yet</p>
+                <p className="text-gray-400 italic dark:text-white">No caption added yet</p>
               )}
             </div>
           )}
@@ -1201,7 +1215,7 @@ const formatDateForInput = (date) => {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {finalCreatives.map((creative) => {
                 const fileExt = creative.fileType?.toLowerCase();
-                const fileUrl = `http://localhost:5000${creative.fileUrl}`;
+                const fileUrl = `${API_BASE_URL}${creative.fileUrl}`;
                 const isImage = ['jpeg', 'jpg', 'png', 'gif', 'webp', 'svg'].includes(fileExt);
                 const isVideo = ['mp4', 'mov', 'avi'].includes(fileExt);
                 const isAudio = ['mp3', 'wav'].includes(fileExt);
@@ -1401,7 +1415,7 @@ const formatDateForInput = (date) => {
                 </div>
                 <div className="flex items-center gap-2">
                   <a
-                    href={`http://localhost:5000${attachment.fileUrl}`}
+                    href={`${API_BASE_URL}${attachment.fileUrl}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"

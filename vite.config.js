@@ -12,10 +12,19 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/api": {
-        target: "http://localhost:5000",
+      // API calls ke liye
+      '/api': {
+        target: 'https://digitalcrm.abacusdesk.com',
         changeOrigin: true,
+        secure: true,
       },
+      // Socket.IO ke liye
+      '/socket.io': {
+        target: 'https://digitalcrm.abacusdesk.com',
+        changeOrigin: true,
+        secure: true,
+        ws: true,  // WebSocket support
+      }
     },
   },
 })
